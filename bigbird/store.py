@@ -80,6 +80,24 @@ def upsert_listings(conn: sqlite3.Connection, site: str, page: int, listings: li
     return count
 
 
+def _sanitize_fts_query(raw: str) -> str:
+    """Turn free-typed user input into a query FTS5 can't choke on.
+
+    FTS5's MATCH syntax treats -, ", :, (, ), * etc as operators, so plain
+    search terms a user would reasonably type -- "leica m-11", "50mm f/1.4",
+    "canon:5d" -- raise an FTS5 syntax error and 500 the request. Wrapping
+    every whitespace-separated token in its own quoted phrase sidesteps
+    that: quoted phrases are searched literally, not parsed for operators,
+    while a space between them still means AND, so plain multi-word
+    searches behave the same as before.
+    """
+    quote = '"'
+    tokens = raw.split()
+    if not tokens:
+        return quote + quote
+    return " ".join(quote + token.replace(quote, quote + quote) + quote for token in tokens)
+
+
 def search(conn: sqlite3.Connection, query: str, limit: int = 25) -> list[dict]:
     rows = conn.execute(
         """
@@ -90,7 +108,7 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 25) -> list[dict]:
         ORDER BY rank
         LIMIT ?
         """,
-        (query, limit),
+        (_sanitize_fts_query(query), limit),
     ).fetchall()
     columns = ["title", "url", "author", "replies", "views", "last_post", "site"]
     return [dict(zip(columns, row)) for row in rows]

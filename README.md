@@ -4,15 +4,34 @@ Universal forum listing search tool. Crawls public buy/sell forums and
 indexes listings locally (SQLite + FTS5) so they can be searched
 independently of the forum's own search.
 
-## Phase 3 (current): FastAPI backend
-
-`bigbird/api.py` wraps the same fetch/parse/store/search building blocks
-the CLI uses in a local HTTP API -- the interface the pywebview desktop
-shell (next phase) will talk to.
+## Phase 4 (current): pywebview desktop shell
 
 ```bash
-python -m uvicorn bigbird.api:app --port 8000
+python -m bigbird.desktop
 ```
+
+Opens a native window (`bigbird/desktop.py`, via pywebview) running the FastAPI
+backend on a background thread and loading its UI (`bigbird/static/`: a plain
+HTML/CSS/JS page, no framework) -- a site picker + page count + Fetch button,
+a search box, and a results list. Closing the window shuts the backend down.
+
+**Bug found and fixed:** searching for anything containing a hyphen, quote,
+or colon (`leica m-11`, `50mm f/1.4`, `canon:5d`) 500'd -- FTS5's `MATCH`
+syntax treats those characters as query operators, so ordinary search terms
+raised a syntax error server-side. `store._sanitize_fts_query` now wraps each
+whitespace-separated token in its own quoted phrase before it reaches FTS5,
+so special characters are searched literally instead of parsed as syntax,
+while a space between tokens still means AND (unchanged behavior for plain
+words). The frontend also had no error handling on the search path (unlike
+fetch), so that 500 failed silently and just left the previous results on
+screen with no sign anything had gone wrong -- looked exactly like "search
+doesn't update." Both `runSearch()` and `/api/search` now handle failure
+visibly instead of silently.
+
+## Phase 3: FastAPI backend
+
+`bigbird/api.py` wraps the same fetch/parse/store/search building blocks
+the CLI uses in a local HTTP API.
 
 - `GET /api/profiles` -- list configured site profiles
 - `GET /api/stats` -- listing counts per site
@@ -20,9 +39,7 @@ python -m uvicorn bigbird.api:app --port 8000
 - `POST /api/fetch` -- `{"site_id": "fredmiranda", "pages": 3}`, runs a real
   crawl synchronously and returns pages fetched / listings stored
 
-Auto-generated interactive docs at `/docs`. All verified live: `/api/fetch`
-was run against fredmiranda.com through the API (not just the CLI) and
-`/api/stats` reflected the new count afterward.
+Auto-generated interactive docs at `/docs`.
 
 ## Phase 2
 
@@ -113,5 +130,5 @@ without id collisions.
 
 ## Roadmap
 
-See the original build brief for the full 7-phase plan: pywebview desktop
-shell and PyInstaller packaging are next.
+See the original build brief for the full 7-phase plan: PyInstaller
+packaging is next.

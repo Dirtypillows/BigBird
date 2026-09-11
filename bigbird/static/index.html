@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>bigbird</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>bigbird</h1>
+  <div id="stats" class="stats">no data yet</div>
+</header>
+
+<section class="panel">
+  <label for="site-select">Site</label>
+  <select id="site-select"></select>
+  <label for="pages-input">Pages</label>
+  <input id="pages-input" type="number" min="1" value="3">
+  <button id="fetch-btn">Fetch</button>
+  <span id="fetch-status" class="status"></span>
+</section>
+
+<section class="panel">
+  <input id="search-input" type="text" placeholder="Search listings..." autofocus>
+  <button id="search-btn">Search</button>
+</section>
+
+<section id="results" class="results"></section>
+
+<script src="app.js"></script>
+</body>
+</html>

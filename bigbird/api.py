@@ -1,20 +1,25 @@
-"""FastAPI backend: exposes the crawler engine and search index over HTTP.
+"""FastAPI backend: exposes the crawler engine and search index over HTTP,
+and serves the desktop shell's UI as static files from the same origin
+(so the frontend can call the API with plain relative fetch() calls, no
+CORS setup needed).
 
-This is what the pywebview desktop shell (next phase) will talk to. Kept
-deliberately thin -- it's the same fetch/parse/store/search building blocks
-the CLI already uses, just callable from a local HTTP client instead of a
-terminal.
+This is what the pywebview desktop shell talks to. Kept deliberately thin
+-- it's the same fetch/parse/store/search building blocks the CLI already
+uses, just callable from an HTTP client instead of a terminal.
 """
 
+import sqlite3
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from bigbird import fetch, parse, store
 from bigbird.profile import load_profile
 
 PROFILES_DIR = Path(__file__).resolve().parent / "profiles"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 app = FastAPI(title="bigbird")
 
@@ -46,9 +51,12 @@ def stats():
 @app.get("/api/search")
 def search(q: str, limit: int = 25):
     conn = store.connect()
-    results = store.search(conn, q, limit=limit)
-    conn.close()
-    return results
+    try:
+        return store.search(conn, q, limit=limit)
+    except sqlite3.OperationalError as e:
+        raise HTTPException(status_code=400, detail=f"bad search query: {e}") from e
+    finally:
+        conn.close()
 
 
 class FetchRequest(BaseModel):
@@ -70,3 +78,7 @@ def run_fetch(req: FetchRequest):
     finally:
         conn.close()
     return {"site_id": req.site_id, "pages_fetched": pages_fetched, "listings_stored": listings_stored}
+
+
+# Mounted last so it never shadows the /api/* routes above.
+app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
