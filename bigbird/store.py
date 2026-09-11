@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS listings (
     replies TEXT,
     views TEXT,
     last_post TEXT,
+    last_post_ts INTEGER,
     board_page INTEGER,
     fetched_at TEXT NOT NULL
 );
@@ -33,6 +34,10 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA)
+    try:
+        conn.execute("ALTER TABLE listings ADD COLUMN last_post_ts INTEGER")
+    except sqlite3.OperationalError:
+        pass  # already present -- CREATE TABLE above only runs on a fresh db
     return conn
 
 
@@ -51,13 +56,14 @@ def upsert_listings(conn: sqlite3.Connection, site: str, page: int, listings: li
             "replies": listing.get("replies", ""),
             "views": listing.get("views", ""),
             "last_post": listing.get("last_post", ""),
+            "last_post_ts": listing.get("last_post_ts"),
             "board_page": page,
             "fetched_at": now,
         }
         conn.execute(
             """
-            INSERT INTO listings (listing_id, site, native_id, title, url, author, replies, views, last_post, board_page, fetched_at)
-            VALUES (:listing_id, :site, :native_id, :title, :url, :author, :replies, :views, :last_post, :board_page, :fetched_at)
+            INSERT INTO listings (listing_id, site, native_id, title, url, author, replies, views, last_post, last_post_ts, board_page, fetched_at)
+            VALUES (:listing_id, :site, :native_id, :title, :url, :author, :replies, :views, :last_post, :last_post_ts, :board_page, :fetched_at)
             ON CONFLICT(listing_id) DO UPDATE SET
                 title=excluded.title,
                 url=excluded.url,
@@ -65,6 +71,7 @@ def upsert_listings(conn: sqlite3.Connection, site: str, page: int, listings: li
                 replies=excluded.replies,
                 views=excluded.views,
                 last_post=excluded.last_post,
+                last_post_ts=excluded.last_post_ts,
                 board_page=excluded.board_page,
                 fetched_at=excluded.fetched_at
             """,
@@ -101,14 +108,14 @@ def _sanitize_fts_query(raw: str) -> str:
 def search(conn: sqlite3.Connection, query: str, limit: int = 25) -> list[dict]:
     rows = conn.execute(
         """
-        SELECT l.title, l.url, l.author, l.replies, l.views, l.last_post, l.site
+        SELECT l.title, l.url, l.author, l.replies, l.views, l.last_post, l.last_post_ts, l.site
         FROM listings_fts f
         JOIN listings l ON l.listing_id = f.listing_id
         WHERE listings_fts MATCH ?
-        ORDER BY rank
+        ORDER BY l.last_post_ts IS NULL, l.last_post_ts DESC
         LIMIT ?
         """,
         (_sanitize_fts_query(query), limit),
     ).fetchall()
-    columns = ["title", "url", "author", "replies", "views", "last_post", "site"]
+    columns = ["title", "url", "author", "replies", "views", "last_post", "last_post_ts", "site"]
     return [dict(zip(columns, row)) for row in rows]

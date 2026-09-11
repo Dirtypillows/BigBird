@@ -28,6 +28,21 @@ screen with no sign anything had gone wrong -- looked exactly like "search
 doesn't update." Both `runSearch()` and `/api/search` now handle failure
 visibly instead of silently.
 
+**Sort by recency, and a "Hide Sold" filter:** results default-sort by last
+activity, newest first (`listings.last_post_ts`, an epoch second column).
+Getting a real timestamp differs by site: golfmk7's XenForo markup has an
+actual `data-time` epoch attribute on the post-date element
+(`last_post_ts_field` in its profile), but fredmiranda only ever shows a
+relative string ("2 hours", "6 years") with no absolute timestamp anywhere
+in the page -- for that case `parse._parse_relative_time` estimates an
+epoch by subtracting the parsed elapsed time from "now" at fetch time. Rows
+indexed before this change have `last_post_ts = NULL` (added via an
+idempotent `ALTER TABLE`) and sort to the bottom until re-fetched. The
+"Hide Sold" checkbox in the UI filters out any title matching `\bsold\b`
+(case-insensitive, so "Unsold" isn't wrongly excluded) client-side against
+the already-fetched results -- no extra request, and it re-filters
+instantly on toggle without needing to search again.
+
 ## Phase 3: FastAPI backend
 
 `bigbird/api.py` wraps the same fetch/parse/store/search building blocks

@@ -54,6 +54,7 @@ class ListingConfig:
     fields: dict[str, FieldSpec] = field(default_factory=dict)
     url_template: str | None = None
     url_field: FieldSpec | None = None
+    last_post_ts_field: FieldSpec | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "ListingConfig":
@@ -65,6 +66,7 @@ class ListingConfig:
             fields={name: FieldSpec.from_dict(spec) for name, spec in data["fields"].items()},
             url_template=data.get("url_template"),
             url_field=FieldSpec.from_dict(data["url_field"]) if "url_field" in data else None,
+            last_post_ts_field=FieldSpec.from_dict(data["last_post_ts_field"]) if "last_post_ts_field" in data else None,
         )
 
 

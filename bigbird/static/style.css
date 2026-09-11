@@ -83,6 +83,20 @@ button:disabled {
   font-size: 0.85rem;
 }
 
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.checkbox-label input {
+  cursor: pointer;
+}
+
 .results {
   padding: 0.5rem 1.5rem 2rem;
   display: flex;

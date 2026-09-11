@@ -50,10 +50,39 @@ async function runFetch() {
   }
 }
 
+const SOLD_RE = /\bsold\b/i;
+let lastResults = [];
+
+function renderResults(results) {
+  const resultsEl = document.getElementById("results");
+  const hideSold = document.getElementById("hide-sold-checkbox").checked;
+  const visible = hideSold ? results.filter((r) => !SOLD_RE.test(r.title)) : results;
+
+  if (!visible.length) {
+    resultsEl.innerHTML = '<p class="empty">No matches.</p>';
+    return;
+  }
+  resultsEl.innerHTML = visible
+    .map(
+      (r) => `
+    <div class="result">
+      <div class="result-title">
+        <a href="${r.url}" target="_blank" rel="noopener">${escapeHtml(r.title)}</a>
+        <span class="badge">${escapeHtml(r.site)}</span>
+      </div>
+      <div class="result-meta">
+        by ${escapeHtml(r.author)} | ${escapeHtml(r.replies)} replies | ${escapeHtml(r.views)} views | ${escapeHtml(r.last_post)}
+      </div>
+    </div>`
+    )
+    .join("");
+}
+
 async function runSearch() {
   const q = document.getElementById("search-input").value.trim();
   const resultsEl = document.getElementById("results");
   if (!q) {
+    lastResults = [];
     resultsEl.innerHTML = "";
     return;
   }
@@ -63,26 +92,10 @@ async function runSearch() {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || res.statusText);
     }
-    const results = await res.json();
-    if (!results.length) {
-      resultsEl.innerHTML = '<p class="empty">No matches.</p>';
-      return;
-    }
-    resultsEl.innerHTML = results
-      .map(
-        (r) => `
-      <div class="result">
-        <div class="result-title">
-          <a href="${r.url}" target="_blank" rel="noopener">${escapeHtml(r.title)}</a>
-          <span class="badge">${escapeHtml(r.site)}</span>
-        </div>
-        <div class="result-meta">
-          by ${escapeHtml(r.author)} | ${escapeHtml(r.replies)} replies | ${escapeHtml(r.views)} views | ${escapeHtml(r.last_post)}
-        </div>
-      </div>`
-      )
-      .join("");
+    lastResults = await res.json();
+    renderResults(lastResults);
   } catch (e) {
+    lastResults = [];
     resultsEl.innerHTML = `<p class="empty">Error: ${escapeHtml(e.message)}</p>`;
   }
 }
@@ -92,6 +105,7 @@ document.getElementById("search-btn").addEventListener("click", runSearch);
 document.getElementById("search-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") runSearch();
 });
+document.getElementById("hide-sold-checkbox").addEventListener("change", () => renderResults(lastResults));
 
 loadProfiles();
 loadStats();

@@ -20,6 +20,10 @@
       "selector": ".structItem-title a",
       "attribute": "href"
     },
+    "last_post_ts_field": {
+      "selector": ".structItem-cell--latest time",
+      "attribute": "data-time"
+    },
     "fields": {
       "title": { "selector": ".structItem-title a" },
       "author": { "selector": ".structItem-cell--main a.username" },
