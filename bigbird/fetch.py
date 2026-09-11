@@ -5,16 +5,25 @@ Supports two fetch methods, selected per-profile:
   - "playwright": drives a real Chromium. Needed for sites like
     fredmiranda.com, where Cloudflare fingerprints the TLS/HTTP-2 handshake
     and 403s plain httpx requests even with headers identical to a working
-    curl request. Each page is fetched in its own fresh browser context
-    with retry/backoff, which avoids Cloudflare's per-session risk scoring
-    flagging the crawl.
+    curl request. Each page is fetched in its own fresh browser context,
+    which avoids some session-based risk scoring.
+
+Both methods share a RateLimiter (see bigbird/ratelimit.py): a 403/429/5xx,
+or a connection-level failure (refused/reset/timeout), backs the pacing off
+for every subsequent page, not just a same-page retry. This is what
+golfmk7.com's bot-mitigation layer needed -- it started refusing connections
+outright after a burst of requests at a fixed pace.
 """
 
 import time
 
 import httpx
+from playwright.sync_api import Error as PlaywrightError
 
 from bigbird.profile import Profile
+from bigbird.ratelimit import RETRYABLE_STATUS, RateLimiter
+
+MAX_ATTEMPTS = 5
 
 
 def page_url(profile: Profile, page: int) -> str:
@@ -27,7 +36,34 @@ def page_url(profile: Profile, page: int) -> str:
     return profile.base_url + profile.board.page_url_template.format(n=n)
 
 
-def _fetch_pages_httpx(profile: Profile, pages: int, delay_seconds: float):
+def _fetch_one_httpx(client: httpx.Client, url: str, limiter: RateLimiter) -> str:
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            resp = client.get(url)
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            limiter.on_blocked()
+            if attempt == MAX_ATTEMPTS:
+                raise RuntimeError(f"failed to fetch {url} after {MAX_ATTEMPTS} attempts: {e}") from e
+            print(f"  ...connection issue fetching {url} ({e}); backing off to {limiter.delay:.1f}s")
+            limiter.wait()
+            continue
+
+        if resp.status_code in RETRYABLE_STATUS:
+            limiter.on_blocked()
+            if attempt == MAX_ATTEMPTS:
+                raise RuntimeError(f"failed to fetch {url} after {MAX_ATTEMPTS} attempts: HTTP {resp.status_code}")
+            print(f"  ...got HTTP {resp.status_code} fetching {url}; backing off to {limiter.delay:.1f}s")
+            limiter.wait()
+            continue
+
+        resp.raise_for_status()
+        limiter.on_success()
+        return resp.text
+
+    raise RuntimeError(f"failed to fetch {url}: exhausted retries")  # unreachable
+
+
+def _fetch_pages_httpx(profile: Profile, pages: int, limiter: RateLimiter):
     headers = {
         "User-Agent": profile.user_agent,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -36,37 +72,47 @@ def _fetch_pages_httpx(profile: Profile, pages: int, delay_seconds: float):
     with httpx.Client(headers=headers, timeout=15.0, follow_redirects=True) as client:
         for page in range(1, pages + 1):
             url = page_url(profile, page)
-            resp = client.get(url)
-            resp.raise_for_status()
-            yield page, resp.text
+            yield page, _fetch_one_httpx(client, url, limiter)
             if page < pages:
-                time.sleep(delay_seconds)
+                limiter.wait()
 
 
-def _fetch_one_playwright(browser, url: str, user_agent: str, retries: int = 3, backoff_seconds: float = 5.0) -> str:
-    """Fetch a single URL in its own fresh browser context.
-
-    A fresh context per page (rather than reusing one context/page across
-    the whole crawl) keeps each request looking like an independent visit,
-    which noticeably reduces 403s from Cloudflare's session risk scoring.
-    """
-    last_status = None
-    for attempt in range(1, retries + 1):
+def _fetch_one_playwright(browser, url: str, user_agent: str, limiter: RateLimiter) -> str:
+    for attempt in range(1, MAX_ATTEMPTS + 1):
         context = browser.new_context(user_agent=user_agent)
         try:
             page_obj = context.new_page()
-            response = page_obj.goto(url, wait_until="domcontentloaded")
-            if response is not None and response.status < 400:
-                return page_obj.content()
-            last_status = response.status if response else "no response"
+            try:
+                response = page_obj.goto(url, wait_until="domcontentloaded")
+            except PlaywrightError as e:
+                limiter.on_blocked()
+                if attempt == MAX_ATTEMPTS:
+                    raise RuntimeError(f"failed to fetch {url} after {MAX_ATTEMPTS} attempts: {e}") from e
+                print(f"  ...connection issue fetching {url} ({e}); backing off to {limiter.delay:.1f}s")
+                limiter.wait()
+                continue
+
+            status = response.status if response else None
+            if status is None or status in RETRYABLE_STATUS:
+                limiter.on_blocked()
+                if attempt == MAX_ATTEMPTS:
+                    raise RuntimeError(f"failed to fetch {url} after {MAX_ATTEMPTS} attempts: HTTP {status}")
+                print(f"  ...got HTTP {status} fetching {url}; backing off to {limiter.delay:.1f}s")
+                limiter.wait()
+                continue
+
+            if status >= 400:
+                raise RuntimeError(f"failed to fetch {url}: HTTP {status}")
+
+            limiter.on_success()
+            return page_obj.content()
         finally:
             context.close()
-        if attempt < retries:
-            time.sleep(backoff_seconds * attempt)
-    raise RuntimeError(f"failed to fetch {url} after {retries} attempts: {last_status}")
+
+    raise RuntimeError(f"failed to fetch {url}: exhausted retries")  # unreachable
 
 
-def _fetch_pages_playwright(profile: Profile, pages: int, delay_seconds: float):
+def _fetch_pages_playwright(profile: Profile, pages: int, limiter: RateLimiter):
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
@@ -74,20 +120,27 @@ def _fetch_pages_playwright(profile: Profile, pages: int, delay_seconds: float):
         try:
             for page in range(1, pages + 1):
                 url = page_url(profile, page)
-                html = _fetch_one_playwright(browser, url, profile.user_agent)
+                html = _fetch_one_playwright(browser, url, profile.user_agent, limiter)
                 yield page, html
                 if page < pages:
-                    time.sleep(delay_seconds)
+                    limiter.wait()
         finally:
             browser.close()
 
 
 def fetch_pages(profile: Profile, pages: int, delay_seconds: float | None = None):
-    """Yield (page_number, html) for pages 1..pages, fetched one at a time."""
-    delay = profile.request_delay_seconds if delay_seconds is None else delay_seconds
+    """Yield (page_number, html) for pages 1..pages, fetched one at a time.
+
+    Pacing starts at delay_seconds (default: the profile's own
+    request_delay_seconds) and adapts from there via a shared RateLimiter --
+    slowing down when the site pushes back, easing back toward the baseline
+    once several requests in a row succeed.
+    """
+    base_delay = profile.request_delay_seconds if delay_seconds is None else delay_seconds
+    limiter = RateLimiter(base_delay=base_delay)
     if profile.fetch_method == "httpx":
-        yield from _fetch_pages_httpx(profile, pages, delay)
+        yield from _fetch_pages_httpx(profile, pages, limiter)
     elif profile.fetch_method == "playwright":
-        yield from _fetch_pages_playwright(profile, pages, delay)
+        yield from _fetch_pages_playwright(profile, pages, limiter)
     else:
         raise ValueError(f"unknown fetch_method: {profile.fetch_method!r}")

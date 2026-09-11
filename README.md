@@ -54,6 +54,19 @@ a XenForo forum, class-based div markup:
   against `base_url`) as an alternative to `url_template` -- the one real
   schema change this second site required.
 
+### Adaptive rate limiting
+
+`bigbird/ratelimit.py` provides a `RateLimiter` shared across a whole crawl
+(see `bigbird/fetch.py`). A 403/408/429/5xx response, or a connection-level
+failure (refused/reset/timeout), doubles the delay before the next request
+(capped at 120s) and retries -- up to 5 attempts per page before giving up
+with a clear error. After 5 consecutive successful requests, the delay
+eases back down 20% toward the profile's baseline, so a temporary slowdown
+doesn't permanently throttle a long crawl. This is what golfmk7.com's
+connection refusals (seen while stress-testing that profile) called for:
+back off automatically when a site is telling us to slow down, rather than
+hammering it at a fixed pace until it starts failing outright.
+
 ### Setup
 
 ```bash
