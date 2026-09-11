@@ -1,4 +1,4 @@
-"""SQLite + FTS5 storage for parsed listings."""
+"""SQLite + FTS5 storage for parsed listings, keyed per-site."""
 
 import datetime
 import sqlite3
@@ -8,8 +8,9 @@ DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "bigbird.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS listings (
-    topic_id INTEGER PRIMARY KEY,
+    listing_id TEXT PRIMARY KEY,
     site TEXT NOT NULL,
+    native_id TEXT NOT NULL,
     title TEXT NOT NULL,
     url TEXT NOT NULL,
     author TEXT,
@@ -23,7 +24,7 @@ CREATE TABLE IF NOT EXISTS listings (
 CREATE VIRTUAL TABLE IF NOT EXISTS listings_fts USING fts5(
     title,
     author,
-    topic_id UNINDEXED
+    listing_id UNINDEXED
 );
 """
 
@@ -39,11 +40,25 @@ def upsert_listings(conn: sqlite3.Connection, site: str, page: int, listings: li
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     count = 0
     for listing in listings:
+        listing_id = f"{site}:{listing['id']}"
+        row = {
+            "listing_id": listing_id,
+            "site": site,
+            "native_id": listing["id"],
+            "title": listing["title"],
+            "url": listing["url"],
+            "author": listing.get("author", ""),
+            "replies": listing.get("replies", ""),
+            "views": listing.get("views", ""),
+            "last_post": listing.get("last_post", ""),
+            "board_page": page,
+            "fetched_at": now,
+        }
         conn.execute(
             """
-            INSERT INTO listings (topic_id, site, title, url, author, replies, views, last_post, board_page, fetched_at)
-            VALUES (:topic_id, :site, :title, :url, :author, :replies, :views, :last_post, :board_page, :fetched_at)
-            ON CONFLICT(topic_id) DO UPDATE SET
+            INSERT INTO listings (listing_id, site, native_id, title, url, author, replies, views, last_post, board_page, fetched_at)
+            VALUES (:listing_id, :site, :native_id, :title, :url, :author, :replies, :views, :last_post, :board_page, :fetched_at)
+            ON CONFLICT(listing_id) DO UPDATE SET
                 title=excluded.title,
                 url=excluded.url,
                 author=excluded.author,
@@ -53,12 +68,12 @@ def upsert_listings(conn: sqlite3.Connection, site: str, page: int, listings: li
                 board_page=excluded.board_page,
                 fetched_at=excluded.fetched_at
             """,
-            {**listing, "site": site, "board_page": page, "fetched_at": now},
+            row,
         )
-        conn.execute("DELETE FROM listings_fts WHERE topic_id = ?", (listing["topic_id"],))
+        conn.execute("DELETE FROM listings_fts WHERE listing_id = ?", (listing_id,))
         conn.execute(
-            "INSERT INTO listings_fts (title, author, topic_id) VALUES (?, ?, ?)",
-            (listing["title"], listing["author"], listing["topic_id"]),
+            "INSERT INTO listings_fts (title, author, listing_id) VALUES (?, ?, ?)",
+            (row["title"], row["author"], listing_id),
         )
         count += 1
     conn.commit()
@@ -70,7 +85,7 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 25) -> list[dict]:
         """
         SELECT l.title, l.url, l.author, l.replies, l.views, l.last_post, l.site
         FROM listings_fts f
-        JOIN listings l ON l.topic_id = f.topic_id
+        JOIN listings l ON l.listing_id = f.listing_id
         WHERE listings_fts MATCH ?
         ORDER BY rank
         LIMIT ?

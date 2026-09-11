@@ -1,0 +1,28 @@
+{
+  "site_id": "fredmiranda",
+  "name": "Fred Miranda Forums - Buy & Sell Photo-Gear",
+  "base_url": "https://www.fredmiranda.com",
+  "fetch_method": "playwright",
+  "request_delay_seconds": 1.5,
+  "board": {
+    "first_page_url": "/forum/board/10/",
+    "page_url_template": "/forum/board/10/{n}/",
+    "page_offset": -1
+  },
+  "listing": {
+    "row_selector": "tr[valign=top]",
+    "id_field": {
+      "cell_index": 1,
+      "attribute": "onclick",
+      "regex": "/forum/topic/(\\d+)"
+    },
+    "url_template": "{base_url}/forum/topic/{id}/",
+    "fields": {
+      "title": { "cell_index": 1, "attribute": "title" },
+      "author": { "cell_index": 2, "selector": "a" },
+      "replies": { "cell_index": 3 },
+      "views": { "cell_index": 4 },
+      "last_post": { "cell_index": 5 }
+    }
+  }
+}

@@ -1,41 +1,49 @@
-"""Phase 1: hardcoded fetcher for fredmiranda.com's Buy & Sell Photo-Gear board.
+"""Generic, profile-driven page fetcher.
 
-fredmiranda.com sits behind Cloudflare. A plain httpx GET with full
-browser-like headers still gets a 403 -- identical headers over curl succeed,
-which points at Cloudflare fingerprinting the TLS/HTTP-2 handshake rather
-than checking headers. Playwright drives a real Chromium, whose network
-stack Cloudflare treats as a normal browser, so it's used here instead of
-httpx per the brief's httpx-with-Playwright-fallback design.
+Supports two fetch methods, selected per-profile:
+  - "httpx": plain HTTP GET with browser-like headers. Fast and light.
+  - "playwright": drives a real Chromium. Needed for sites like
+    fredmiranda.com, where Cloudflare fingerprints the TLS/HTTP-2 handshake
+    and 403s plain httpx requests even with headers identical to a working
+    curl request. Each page is fetched in its own fresh browser context
+    with retry/backoff, which avoids Cloudflare's per-session risk scoring
+    flagging the crawl.
 """
 
 import time
 
-from playwright.sync_api import sync_playwright
+import httpx
 
-SITE = "fredmiranda"
-BASE_URL = "https://www.fredmiranda.com"
-BOARD_ID = 10
-
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-)
+from bigbird.profile import Profile
 
 
-def board_url(page: int) -> str:
-    """Map a 1-based page number to the site's URL pattern.
-
-    Page 1 is /forum/board/10/, page 2 is /forum/board/10/1/, page 3 is
-    /forum/board/10/2/, etc -- the trailing path segment is (page - 1).
-    """
+def page_url(profile: Profile, page: int) -> str:
+    """Map a 1-based page number to this profile's URL pattern."""
     if page < 1:
         raise ValueError("page must be >= 1")
     if page == 1:
-        return f"{BASE_URL}/forum/board/{BOARD_ID}/"
-    return f"{BASE_URL}/forum/board/{BOARD_ID}/{page - 1}/"
+        return profile.base_url + profile.board.first_page_url
+    n = page + profile.board.page_offset
+    return profile.base_url + profile.board.page_url_template.format(n=n)
 
 
-def _fetch_one(browser, url: str, retries: int = 3, backoff_seconds: float = 5.0) -> str:
+def _fetch_pages_httpx(profile: Profile, pages: int, delay_seconds: float):
+    headers = {
+        "User-Agent": profile.user_agent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    with httpx.Client(headers=headers, timeout=15.0, follow_redirects=True) as client:
+        for page in range(1, pages + 1):
+            url = page_url(profile, page)
+            resp = client.get(url)
+            resp.raise_for_status()
+            yield page, resp.text
+            if page < pages:
+                time.sleep(delay_seconds)
+
+
+def _fetch_one_playwright(browser, url: str, user_agent: str, retries: int = 3, backoff_seconds: float = 5.0) -> str:
     """Fetch a single URL in its own fresh browser context.
 
     A fresh context per page (rather than reusing one context/page across
@@ -44,7 +52,7 @@ def _fetch_one(browser, url: str, retries: int = 3, backoff_seconds: float = 5.0
     """
     last_status = None
     for attempt in range(1, retries + 1):
-        context = browser.new_context(user_agent=USER_AGENT)
+        context = browser.new_context(user_agent=user_agent)
         try:
             page_obj = context.new_page()
             response = page_obj.goto(url, wait_until="domcontentloaded")
@@ -58,16 +66,28 @@ def _fetch_one(browser, url: str, retries: int = 3, backoff_seconds: float = 5.0
     raise RuntimeError(f"failed to fetch {url} after {retries} attempts: {last_status}")
 
 
-def fetch_pages(pages: int, delay_seconds: float = 1.5):
-    """Yield (page_number, html) for pages 1..pages, fetched one at a time."""
+def _fetch_pages_playwright(profile: Profile, pages: int, delay_seconds: float):
+    from playwright.sync_api import sync_playwright
+
     with sync_playwright() as p:
         browser = p.chromium.launch()
         try:
             for page in range(1, pages + 1):
-                url = board_url(page)
-                html = _fetch_one(browser, url)
+                url = page_url(profile, page)
+                html = _fetch_one_playwright(browser, url, profile.user_agent)
                 yield page, html
                 if page < pages:
                     time.sleep(delay_seconds)
         finally:
             browser.close()
+
+
+def fetch_pages(profile: Profile, pages: int, delay_seconds: float | None = None):
+    """Yield (page_number, html) for pages 1..pages, fetched one at a time."""
+    delay = profile.request_delay_seconds if delay_seconds is None else delay_seconds
+    if profile.fetch_method == "httpx":
+        yield from _fetch_pages_httpx(profile, pages, delay)
+    elif profile.fetch_method == "playwright":
+        yield from _fetch_pages_playwright(profile, pages, delay)
+    else:
+        raise ValueError(f"unknown fetch_method: {profile.fetch_method!r}")
