@@ -4,7 +4,27 @@ Universal forum listing search tool. Crawls public buy/sell forums and
 indexes listings locally (SQLite + FTS5) so they can be searched
 independently of the forum's own search.
 
-## Phase 2 (current)
+## Phase 3 (current): FastAPI backend
+
+`bigbird/api.py` wraps the same fetch/parse/store/search building blocks
+the CLI uses in a local HTTP API -- the interface the pywebview desktop
+shell (next phase) will talk to.
+
+```bash
+python -m uvicorn bigbird.api:app --port 8000
+```
+
+- `GET /api/profiles` -- list configured site profiles
+- `GET /api/stats` -- listing counts per site
+- `GET /api/search?q=...&limit=25` -- FTS5 search across every indexed site
+- `POST /api/fetch` -- `{"site_id": "fredmiranda", "pages": 3}`, runs a real
+  crawl synchronously and returns pages fetched / listings stored
+
+Auto-generated interactive docs at `/docs`. All verified live: `/api/fetch`
+was run against fredmiranda.com through the API (not just the CLI) and
+`/api/stats` reflected the new count afterward.
+
+## Phase 2
 
 Sites are described by a JSON profile under `bigbird/profiles/` -- base
 URL, pagination pattern, fetch method, and how to find/extract each
@@ -93,5 +113,5 @@ without id collisions.
 
 ## Roadmap
 
-See the original build brief for the full 7-phase plan: FastAPI backend,
-pywebview desktop shell, and PyInstaller packaging.
+See the original build brief for the full 7-phase plan: pywebview desktop
+shell and PyInstaller packaging are next.
