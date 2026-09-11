@@ -1,0 +1,31 @@
+{
+  "site_id": "golfmk7",
+  "name": "GolfMk7.com Forums - Private Classifieds (Buy/Sell/Trade)",
+  "base_url": "https://www.golfmk7.com",
+  "fetch_method": "playwright",
+  "request_delay_seconds": 1.5,
+  "board": {
+    "first_page_url": "/forums/index.php?forums/private-classifieds-buy-sell-and-trade.184/",
+    "page_url_template": "/forums/index.php?forums/private-classifieds-buy-sell-and-trade.184/page-{n}",
+    "page_offset": 0
+  },
+  "listing": {
+    "row_selector": "div.structItem.structItem--thread",
+    "id_field": {
+      "selector": ".structItem-title a",
+      "attribute": "href",
+      "regex": "\\.(\\d+)/?$"
+    },
+    "url_field": {
+      "selector": ".structItem-title a",
+      "attribute": "href"
+    },
+    "fields": {
+      "title": { "selector": ".structItem-title a" },
+      "author": { "selector": ".structItem-cell--main a.username" },
+      "replies": { "selector": ".structItem-cell--meta dl:nth-of-type(1) dd" },
+      "views": { "selector": ".structItem-cell--meta dl:nth-of-type(2) dd" },
+      "last_post": { "selector": ".structItem-cell--latest time", "attribute": "title" }
+    }
+  }
+}

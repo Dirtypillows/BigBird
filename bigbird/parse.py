@@ -6,6 +6,7 @@ each configured field the same way.
 """
 
 import re
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
@@ -57,7 +58,14 @@ def parse_board_page(profile: Profile, html: str) -> list[dict]:
         if not record.get("title"):
             continue
 
-        record["url"] = profile.listing.url_template.format(base_url=profile.base_url, id=native_id)
+        if profile.listing.url_field is not None:
+            href = _extract(profile.listing.url_field, row)
+            if not href:
+                continue
+            record["url"] = urljoin(profile.base_url + "/", href)
+        else:
+            record["url"] = profile.listing.url_template.format(base_url=profile.base_url, id=native_id)
+
         listings.append(record)
 
     return listings

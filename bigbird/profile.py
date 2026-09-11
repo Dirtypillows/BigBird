@@ -51,16 +51,20 @@ class BoardConfig:
 class ListingConfig:
     row_selector: str
     id_field: FieldSpec
-    url_template: str
     fields: dict[str, FieldSpec] = field(default_factory=dict)
+    url_template: str | None = None
+    url_field: FieldSpec | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "ListingConfig":
+        if not data.get("url_template") and not data.get("url_field"):
+            raise ValueError("listing config needs one of url_template or url_field")
         return cls(
             row_selector=data["row_selector"],
             id_field=FieldSpec.from_dict(data["id_field"]),
-            url_template=data["url_template"],
             fields={name: FieldSpec.from_dict(spec) for name, spec in data["fields"].items()},
+            url_template=data.get("url_template"),
+            url_field=FieldSpec.from_dict(data["url_field"]) if "url_field" in data else None,
         )
 
 
