@@ -43,6 +43,44 @@ idempotent `ALTER TABLE`) and sort to the bottom until re-fetched. The
 the already-fetched results -- no extra request, and it re-filters
 instantly on toggle without needing to search again.
 
+**Per-listing "Check Deal" button (price + Excellent/Great/Fair/Bad rating):**
+the board-page listing has no price -- it's "usually found in the forum
+thread itself" (confirmed against real thread pages on both sites: fredmiranda
+has a structured `Price: $165.00` line in the first post; golfmk7 threads are
+often multi-item "parts out" posts with a per-item price list, no single
+total). And there's no real market-price data anywhere locally to judge
+"is this a good deal" against -- a rule-based heuristic here would just be
+guessing. So `bigbird/deal.py` fetches the listing's actual thread page
+(`fetch.fetch_single`, reusing the same per-site fetch method/retry/backoff
+as the board crawler) and hands the page text to an LLM (Anthropic API,
+default model `claude-haiku-4-5-20251001`, overridable via
+`BIGBIRD_DEAL_MODEL`) with a forced tool call, asking it to extract the
+price and item count *and* rate the deal in one pass -- more robust than
+per-site price regex/selectors, since real threads are messy (prices only
+in the first post, multiple items each individually priced, SOLD/pending
+markers on individual items within a bundle).
+
+This never runs automatically -- only when the user clicks "Check Deal" on
+a specific listing, since it costs a network fetch plus an API call. Once
+checked, the result (`price`, `item_count`, `deal_rating`, `deal_reason`,
+`checked_at`) is cached on that row in the DB, so re-viewing or re-searching
+a checked listing never re-fetches the page or re-calls the API -- the
+button is simply replaced by a colored rating badge (hover for the reason).
+
+Requires an Anthropic API key:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # PowerShell: $env:ANTHROPIC_API_KEY = "sk-ant-..."
+```
+
+Without it, clicking "Check Deal" fails cleanly with a clear inline error
+(verified: the thread page still gets fetched for real; only the LLM step
+is short-circuited) rather than crashing -- the button resets to "Error -
+retry". The live LLM call itself couldn't be verified from the dev sandbox
+this was built in (no API key available there); everything up to that
+boundary -- thread fetching, text extraction, caching, the button/badge UI,
+and the no-key error path -- was tested against the real, running app.
+
 ## Phase 3: FastAPI backend
 
 `bigbird/api.py` wraps the same fetch/parse/store/search building blocks

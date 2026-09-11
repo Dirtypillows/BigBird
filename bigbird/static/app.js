@@ -53,6 +53,18 @@ async function runFetch() {
 const SOLD_RE = /\bsold\b/i;
 let lastResults = [];
 
+function dealSideHtml(r) {
+  const priceHtml = r.price ? `<div class="price">${escapeHtml(r.price)}</div>` : "";
+  let actionHtml;
+  if (r.checked_at) {
+    const ratingClass = "deal-" + (r.deal_rating || "unknown").toLowerCase();
+    actionHtml = `<span class="deal-badge ${ratingClass}" title="${escapeHtml(r.deal_reason || "")}">${escapeHtml(r.deal_rating || "?")}</span>`;
+  } else {
+    actionHtml = `<button class="check-deal-btn" data-listing-id="${escapeHtml(r.listing_id)}">Check Deal</button>`;
+  }
+  return `<div class="result-side">${priceHtml}${actionHtml}</div>`;
+}
+
 function renderResults(results) {
   const resultsEl = document.getElementById("results");
   const hideSold = document.getElementById("hide-sold-checkbox").checked;
@@ -66,13 +78,16 @@ function renderResults(results) {
     .map(
       (r) => `
     <div class="result">
-      <div class="result-title">
-        <a href="${r.url}" target="_blank" rel="noopener">${escapeHtml(r.title)}</a>
-        <span class="badge">${escapeHtml(r.site)}</span>
+      <div class="result-main">
+        <div class="result-title">
+          <a href="${r.url}" target="_blank" rel="noopener">${escapeHtml(r.title)}</a>
+          <span class="badge">${escapeHtml(r.site)}</span>
+        </div>
+        <div class="result-meta">
+          by ${escapeHtml(r.author)} | ${escapeHtml(r.replies)} replies | ${escapeHtml(r.views)} views | ${escapeHtml(r.last_post)}
+        </div>
       </div>
-      <div class="result-meta">
-        by ${escapeHtml(r.author)} | ${escapeHtml(r.replies)} replies | ${escapeHtml(r.views)} views | ${escapeHtml(r.last_post)}
-      </div>
+      ${dealSideHtml(r)}
     </div>`
     )
     .join("");
@@ -99,6 +114,34 @@ async function runSearch() {
     resultsEl.innerHTML = `<p class="empty">Error: ${escapeHtml(e.message)}</p>`;
   }
 }
+
+document.getElementById("results").addEventListener("click", async (e) => {
+  const btn = e.target.closest(".check-deal-btn");
+  if (!btn) return;
+
+  const listingId = btn.dataset.listingId;
+  btn.disabled = true;
+  btn.textContent = "Checking...";
+  try {
+    const res = await fetch("/api/check-deal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ listing_id: listingId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || res.statusText);
+    }
+    const updated = await res.json();
+    const idx = lastResults.findIndex((r) => r.listing_id === listingId);
+    if (idx !== -1) lastResults[idx] = { ...lastResults[idx], ...updated };
+    renderResults(lastResults);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Error - retry";
+    btn.title = err.message;
+  }
+});
 
 document.getElementById("fetch-btn").addEventListener("click", runFetch);
 document.getElementById("search-btn").addEventListener("click", runSearch);

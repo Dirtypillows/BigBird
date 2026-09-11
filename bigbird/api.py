@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from bigbird import fetch, parse, store
+from bigbird import deal, fetch, parse, store
 from bigbird.profile import load_profile
 
 PROFILES_DIR = Path(__file__).resolve().parent / "profiles"
@@ -78,6 +78,39 @@ def run_fetch(req: FetchRequest):
     finally:
         conn.close()
     return {"site_id": req.site_id, "pages_fetched": pages_fetched, "listings_stored": listings_stored}
+
+
+class CheckDealRequest(BaseModel):
+    listing_id: str
+
+
+@app.post("/api/check-deal")
+def check_deal(req: CheckDealRequest):
+    conn = store.connect()
+    try:
+        listing = store.get_listing(conn, req.listing_id)
+        if listing is None:
+            raise HTTPException(status_code=404, detail=f"unknown listing: {req.listing_id}")
+
+        if listing["checked_at"]:
+            return listing  # cached -- no re-fetch, no re-charging the API
+
+        profile = load_profile(_profile_path(listing["site"]))
+        try:
+            html = fetch.fetch_single(profile, listing["url"])
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"couldn't fetch the listing page: {e}") from e
+
+        page_text = deal.extract_page_text(html)
+        try:
+            result = deal.analyze_deal(listing["title"], listing["site"], page_text)
+        except deal.DealCheckError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from e
+
+        store.save_deal_check(conn, req.listing_id, result["price"], result["item_count"], result["rating"], result["reason"])
+        return store.get_listing(conn, req.listing_id)
+    finally:
+        conn.close()
 
 
 # Mounted last so it never shadows the /api/* routes above.

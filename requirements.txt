@@ -4,3 +4,4 @@ playwright>=1.47
 fastapi>=0.115
 uvicorn>=0.30
 pywebview>=6.0
+anthropic>=0.40

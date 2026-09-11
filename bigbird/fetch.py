@@ -128,6 +128,32 @@ def _fetch_pages_playwright(profile: Profile, pages: int, limiter: RateLimiter):
             browser.close()
 
 
+def fetch_single(profile: Profile, url: str) -> str:
+    """Fetch one arbitrary URL (e.g. a thread page) using this profile's
+    fetch method, retry/backoff, and User-Agent -- not a paginated crawl.
+    """
+    limiter = RateLimiter(base_delay=profile.request_delay_seconds)
+    if profile.fetch_method == "httpx":
+        headers = {
+            "User-Agent": profile.user_agent,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        with httpx.Client(headers=headers, timeout=15.0, follow_redirects=True) as client:
+            return _fetch_one_httpx(client, url, limiter)
+    elif profile.fetch_method == "playwright":
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            try:
+                return _fetch_one_playwright(browser, url, profile.user_agent, limiter)
+            finally:
+                browser.close()
+    else:
+        raise ValueError(f"unknown fetch_method: {profile.fetch_method!r}")
+
+
 def fetch_pages(profile: Profile, pages: int, delay_seconds: float | None = None):
     """Yield (page_number, html) for pages 1..pages, fetched one at a time.
 

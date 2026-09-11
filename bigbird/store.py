@@ -19,7 +19,12 @@ CREATE TABLE IF NOT EXISTS listings (
     last_post TEXT,
     last_post_ts INTEGER,
     board_page INTEGER,
-    fetched_at TEXT NOT NULL
+    fetched_at TEXT NOT NULL,
+    price TEXT,
+    item_count INTEGER,
+    deal_rating TEXT,
+    deal_reason TEXT,
+    checked_at TEXT
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS listings_fts USING fts5(
@@ -34,10 +39,18 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA)
-    try:
-        conn.execute("ALTER TABLE listings ADD COLUMN last_post_ts INTEGER")
-    except sqlite3.OperationalError:
-        pass  # already present -- CREATE TABLE above only runs on a fresh db
+    for ddl in (
+        "ALTER TABLE listings ADD COLUMN last_post_ts INTEGER",
+        "ALTER TABLE listings ADD COLUMN price TEXT",
+        "ALTER TABLE listings ADD COLUMN item_count INTEGER",
+        "ALTER TABLE listings ADD COLUMN deal_rating TEXT",
+        "ALTER TABLE listings ADD COLUMN deal_reason TEXT",
+        "ALTER TABLE listings ADD COLUMN checked_at TEXT",
+    ):
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError:
+            pass  # already present -- CREATE TABLE above only runs on a fresh db
     return conn
 
 
@@ -87,6 +100,35 @@ def upsert_listings(conn: sqlite3.Connection, site: str, page: int, listings: li
     return count
 
 
+def get_listing(conn: sqlite3.Connection, listing_id: str) -> dict | None:
+    columns = ["listing_id", "site", "title", "url", "price", "item_count", "deal_rating", "deal_reason", "checked_at"]
+    row = conn.execute(
+        f"SELECT {', '.join(columns)} FROM listings WHERE listing_id = ?",
+        (listing_id,),
+    ).fetchone()
+    return dict(zip(columns, row)) if row else None
+
+
+def save_deal_check(
+    conn: sqlite3.Connection,
+    listing_id: str,
+    price: str | None,
+    item_count: int | None,
+    rating: str,
+    reason: str,
+) -> None:
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    conn.execute(
+        """
+        UPDATE listings
+        SET price = ?, item_count = ?, deal_rating = ?, deal_reason = ?, checked_at = ?
+        WHERE listing_id = ?
+        """,
+        (price, item_count, rating, reason, now, listing_id),
+    )
+    conn.commit()
+
+
 def _sanitize_fts_query(raw: str) -> str:
     """Turn free-typed user input into a query FTS5 can't choke on.
 
@@ -106,9 +148,13 @@ def _sanitize_fts_query(raw: str) -> str:
 
 
 def search(conn: sqlite3.Connection, query: str, limit: int = 25) -> list[dict]:
+    columns = [
+        "listing_id", "title", "url", "author", "replies", "views", "last_post", "last_post_ts",
+        "site", "price", "item_count", "deal_rating", "deal_reason", "checked_at",
+    ]
     rows = conn.execute(
-        """
-        SELECT l.title, l.url, l.author, l.replies, l.views, l.last_post, l.last_post_ts, l.site
+        f"""
+        SELECT {", ".join("l." + c for c in columns)}
         FROM listings_fts f
         JOIN listings l ON l.listing_id = f.listing_id
         WHERE listings_fts MATCH ?
@@ -117,5 +163,4 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 25) -> list[dict]:
         """,
         (_sanitize_fts_query(query), limit),
     ).fetchall()
-    columns = ["title", "url", "author", "replies", "views", "last_post", "last_post_ts", "site"]
     return [dict(zip(columns, row)) for row in rows]
